@@ -23,7 +23,7 @@ def get_eval(sys_prompt, user_prompt: str, max_tokens: int):
     for i in range(MAX_API_RETRY):
         try:
             response = openai.ChatCompletion.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": sys_prompt},
                     {
@@ -89,7 +89,6 @@ def get_json_list(file_path):
             json_list.append(json.loads(line))
         return json_list
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ChatGPT-based QA evaluation.")
     parser.add_argument("-q", "--question-file")
@@ -97,6 +96,7 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--prompt-file")
     parser.add_argument("-r", "--reviewer-file")
     parser.add_argument("-o", "--output-review-file")
+    parser.add_argument("-e", "--current-review-file", required=False, default=None)
     parser.add_argument(
         "--max-tokens",
         type=int,
@@ -112,15 +112,25 @@ if __name__ == "__main__":
     answer2_jsons = get_json_list(args.answer_file_list[1])
     reviewer_jsons = get_json_list(args.reviewer_file)
     prompt_jsons = get_json_list(args.prompt_file)
+    if args.current_review_file:
+        current_reviewe_jsons = get_json_list(args.current_review_file)
 
     # check if # of questions, answers are the same
-    assert len(question_jsons) == len(answer1_jsons) == len(answer2_jsons)
+    if args.current_review_file:
+        assert len(question_jsons) == len(answer1_jsons) == len(answer2_jsons) == len(current_reviewe_jsons)
+    else:
+        assert len(question_jsons) == len(answer1_jsons) == len(answer2_jsons)
 
     handles = []
-    review_jsons = []
+    if args.current_review_file:
+        review_jsons = current_reviewe_jsons
+    else:
+        review_jsons = []
     total_len = len(question_jsons)
     question_idx_list = list(range(total_len))
-
+    # map error question id to original question id
+    error_question_id_to_question_id = {}
+    
     for i in question_idx_list:
         assert (
             answer1_jsons[i]["question_id"]
@@ -135,17 +145,26 @@ if __name__ == "__main__":
         sys_prompt, prompt, reviewer_id = gen_prompt(
             reviewer_jsons, prompt_jsons, cat, ques, ans1, ans2
         )
-        review_id = shortuuid.uuid()
-        review_jsons.append(
-            {
-                "review_id": review_id,
-                "question_id": question_jsons[i]["question_id"],
-                "answer1_id": answer1_jsons[i]["answer_id"],
-                "answer2_id": answer2_jsons[i]["answer_id"],
-                "reviewer_id": reviewer_id,
-                "metadata": {},
-            }
-        )
+        if args.current_review_file:
+            review_id = current_reviewe_jsons[i]["review_id"]
+            if review_jsons[i]["text"] != "error":
+                continue
+        else:
+            review_id = shortuuid.uuid()
+            review_jsons.append(
+                {
+                    "review_id": review_id,
+                    "question_id": question_jsons[i]["question_id"],
+                    "answer1_id": answer1_jsons[i]["answer_id"],
+                    "answer2_id": answer2_jsons[i]["answer_id"],
+                    "reviewer_id": reviewer_id,
+                    "metadata": {},
+                }
+            )
+
+        error_question_id = len(error_question_id_to_question_id)
+        error_question_id_to_question_id[error_question_id] = i
+        print(f"error_question_id: {error_question_id} i: {i}")
         # To avoid the rate limit set by OpenAI
         handles.append(get_eval.remote(sys_prompt, prompt, args.max_tokens))
         logger.info(
@@ -154,9 +173,16 @@ if __name__ == "__main__":
         time.sleep(REQ_TIME_GAP)
 
     reviews = ray.get(handles)
+    # fill in the review_jsons
+    for e_idx, review in enumerate(reviews):
+        idx = error_question_id_to_question_id[e_idx]
+        scores = parse_score(review)
+        review_jsons[idx]["text"] = review
+        review_jsons[idx]["score"] = scores
+
+    if len(reviews)==0:
+        print(f'All eval_finished.')
+
     with open(f"{args.output_review_file}", "w") as output_review_file:
-        for idx, review in enumerate(reviews):
-            scores = parse_score(review)
-            review_jsons[idx]["text"] = review
-            review_jsons[idx]["score"] = scores
+        for idx, review_json in enumerate(review_jsons):
             output_review_file.write(json.dumps(review_jsons[idx]) + "\n")
