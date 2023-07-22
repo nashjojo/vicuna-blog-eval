@@ -183,6 +183,9 @@ if __name__ == "__main__":
     if len(reviews)==0:
         print(f'All eval_finished.')
 
+    # Ensure the directory exists
+    directory_path = os.path.dirname(args.output_review_file)
+    os.makedirs(directory_path, exist_ok=True)
     with open(f"{args.output_review_file}", "w") as output_review_file:
         for idx, review_json in enumerate(review_jsons):
             output_review_file.write(json.dumps(review_jsons[idx]) + "\n")
