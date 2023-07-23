@@ -2,6 +2,11 @@ answer_csv := ../human_sense/2023-06-23_LLM_eval_humansense_data_searchgpt_0.4.c
 baseline_model := GPT-4\:website
 model_id := searchgpt_0.4
 
+rating:
+	python3 -u eval/jsonl2csv.py \
+		--output_file eval/table/review/${model_id}/review_${baseline_model}_${model_id}.csv \
+		--input_file eval/table/review/${model_id}/review_${baseline_model}_${model_id}.jsonl
+
 judge: 
 	mkdir -p eval/table/review/${model_id} ; \
 	python3 -u eval/eval_gpt_review.py -q eval/table/question_human_sense.jsonl -a eval/table/answer/answer_human_sense_${baseline_model}.jsonl eval/table/answer/answer_human_sense_${model_id}.jsonl -p eval/table/prompt.jsonl -r eval/table/reviewer.jsonl -o eval/table/review/${model_id}/review_${baseline_model}_${model_id}.jsonl | tee log_${model_id} ; \
